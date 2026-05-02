@@ -1,38 +1,65 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SearchEngine } from './components/SearchEngine';
 import { DocumentIngestion } from './components/DocumentIngestion';
-import { Shield, Search, FileUp, Activity } from 'lucide-react';
-import { initialSuspeitos } from './mockData';
+import { Shield, Search, FileUp, Activity, Database } from 'lucide-react';
+import { supabase } from './supabaseClient';
 import type { Suspeito } from './types';
+import './App.css';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'ingestion'>('search');
-  const [suspeitosGlobais, setSuspeitosGlobais] = useState<Suspeito[]>(initialSuspeitos);
+  const [suspeitosGlobais, setSuspeitosGlobais] = useState<Suspeito[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleIngestionComplete = (novosSuspeitos: Suspeito[]) => {
-    setSuspeitosGlobais(prev => {
-      const updated = [...prev];
-      
-      novosSuspeitos.forEach(novo => {
-        // Lógica de mesclagem (simulada por ID, mas na vida real seria por CPF/Nome)
-        const existeIndex = updated.findIndex(s => s.id === novo.id);
-        if (existeIndex >= 0) {
-          // Se já existe, adiciona os novos relatórios à ficha existente
-          updated[existeIndex] = {
-            ...updated[existeIndex],
-            relatorios: [...updated[existeIndex].relatorios, ...novo.relatorios]
-          };
-        } else {
-          // Se não existe, adiciona o novo cadastro
-          updated.push(novo);
-        }
+  // Busca os dados reais do Supabase ao iniciar
+  useEffect(() => {
+    fetchSuspeitos();
+  }, []);
+
+  const fetchSuspeitos = async () => {
+    setIsLoading(true);
+    try {
+      // Busca suspeitos
+      const { data: suspeitosData, error: suspeitosError } = await supabase
+        .from('suspeitos')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (suspeitosError) throw suspeitosError;
+
+      // Busca características
+      const { data: caracData, error: caracError } = await supabase
+        .from('caracteristicas')
+        .select('*');
+        
+      if (caracError) throw caracError;
+
+      // Monta os objetos complexos na memória
+      const suspeitosCompletos: Suspeito[] = (suspeitosData || []).map(s => {
+        const caracs = (caracData || []).filter(c => c.suspeito_id === s.id);
+        return {
+          id: s.id,
+          nome: s.nome,
+          alcunha: s.alcunha || undefined,
+          fotoUrl: s.foto_url || undefined,
+          ultimaVisto: s.ultima_visto || undefined,
+          caracteristicas: caracs.map(c => ({ tipo: c.tipo as any, descricao: c.descricao })),
+          relatorios: [] // Simplificando por enquanto
+        };
       });
-      
-      return updated;
-    });
-    
-    // Opcional: Voltar para a aba de busca após a ingestão
-    // setTimeout(() => setActiveTab('search'), 2000);
+
+      setSuspeitosGlobais(suspeitosCompletos);
+    } catch (error) {
+      console.error('Erro ao buscar dados do Supabase:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleIngest = async () => {
+    // Quando a ingestão terminar e inserir no banco, recarregamos a lista
+    await fetchSuspeitos();
+    setActiveTab('search');
   };
 
   return (
@@ -80,12 +107,17 @@ function App() {
         </div>
       </nav>
 
-      {/* Main Content */}
+      {/* Main Content Area */}
       <main className="main-content">
-        {activeTab === 'search' ? (
+        {isLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', flexDirection: 'column', gap: '1rem' }}>
+            <div className="animate-spin text-accent"><Database size={48} /></div>
+            <p className="text-secondary">Sincronizando com Supabase...</p>
+          </div>
+        ) : activeTab === 'search' ? (
           <SearchEngine suspeitos={suspeitosGlobais} />
         ) : (
-          <DocumentIngestion onIngest={handleIngestionComplete} />
+          <DocumentIngestion onIngest={handleIngest} />
         )}
       </main>
 
