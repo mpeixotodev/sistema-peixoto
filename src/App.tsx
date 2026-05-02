@@ -56,7 +56,73 @@ function App() {
     }
   };
 
-  const handleIngest = async () => {
+  const handleIngest = async (novosSuspeitos: Suspeito[]) => {
+    setIsLoading(true);
+    try {
+      for (const suspeito of novosSuspeitos) {
+        // 1. Inserir Relatório
+        let relatorio_id = null;
+        if (suspeito.relatorios && suspeito.relatorios.length > 0) {
+          const relatorio = suspeito.relatorios[0];
+          const { data: relData } = await supabase
+            .from('relatorios')
+            .select('id')
+            .eq('titulo', relatorio.titulo)
+            .maybeSingle();
+            
+          if (relData) {
+            relatorio_id = relData.id;
+          } else {
+            const { data: newRel } = await supabase
+              .from('relatorios')
+              .insert({
+                titulo: relatorio.titulo,
+                conteudo: relatorio.conteudo,
+                data: relatorio.data,
+                fonte: relatorio.fonte
+              })
+              .select()
+              .single();
+            if (newRel) relatorio_id = newRel.id;
+          }
+        }
+
+        // 2. Inserir Suspeito
+        const { data: newSuspeito } = await supabase
+          .from('suspeitos')
+          .insert({
+            nome: suspeito.nome,
+            alcunha: suspeito.alcunha || null,
+            foto_url: suspeito.fotoUrl || null,
+            ultima_visto: suspeito.ultimaVisto || null
+          })
+          .select()
+          .single();
+
+        if (newSuspeito) {
+          // 3. Inserir Características
+          if (suspeito.caracteristicas && suspeito.caracteristicas.length > 0) {
+            const caracsToInsert = suspeito.caracteristicas.map(c => ({
+              suspeito_id: newSuspeito.id,
+              tipo: c.tipo,
+              descricao: c.descricao
+            }));
+            await supabase.from('caracteristicas').insert(caracsToInsert);
+          }
+
+          // 4. Inserir Relação
+          if (relatorio_id) {
+            await supabase.from('suspeito_relatorio').insert({
+              suspeito_id: newSuspeito.id,
+              relatorio_id: relatorio_id
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao inserir no Supabase:', error);
+    }
+
     // Quando a ingestão terminar e inserir no banco, recarregamos a lista
     await fetchSuspeitos();
     setActiveTab('search');
