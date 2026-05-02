@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { FileUp, FileText, CheckCircle2, Loader2, Sparkles, Users } from 'lucide-react';
 import type { Suspeito } from '../types';
-import { extractRICMonteSerrat } from '../mockData';
-import { extractImagesFromPDF } from '../utils/pdfExtractor';
+import { extractImagesFromPDF, extractTextFromPDF } from '../utils/pdfExtractor';
+import mammoth from 'mammoth';
 
 interface DocumentIngestionProps {
   onIngest: (novosSuspeitos: Suspeito[]) => void;
@@ -16,47 +16,59 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
   const [fotosExtraidas, setFotosExtraidas] = useState<number>(0);
 
   const handleUpload = async () => {
-    if (!file && !fileName) return; // Permite o simular se fileName estiver setado
+    if (!file && !fileName) return; 
     setStatus('processing');
     
     try {
       let extractedImages: string[] = [];
+      let rawText = "Nenhum texto extraído.";
       
-      // Se for um arquivo PDF real, extrai as imagens
-      if (file && file.type === 'application/pdf') {
-        extractedImages = await extractImagesFromPDF(file);
+      if (file) {
+        if (file.type === 'application/pdf') {
+          extractedImages = await extractImagesFromPDF(file);
+          rawText = await extractTextFromPDF(file);
+        } else if (file.name.endsWith('.docx')) {
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          rawText = result.value;
+        } else if (file.type === 'text/plain') {
+          rawText = await file.text();
+        }
       }
-      
-      // Simula o tempo de processamento da IA para texto
+
+      // Simula o tempo de processamento da IA
       setTimeout(() => {
-        const { novosSuspeitos } = extractRICMonteSerrat();
-        
-        // Distribui as imagens reais extraídas do PDF para as fichas geradas
-        let imgIndex = 0;
-        novosSuspeitos.forEach(suspeito => {
-          // Atribui uma foto se houver uma disponível no banco de imagens extraídas
-          if (extractedImages[imgIndex]) {
-            suspeito.fotoUrl = extractedImages[imgIndex];
-            imgIndex++;
+        const novoRelatorio = {
+          id: 'r_' + Date.now(),
+          titulo: fileName ? `Análise: ${fileName}` : 'Relatório sem título',
+          conteudo: rawText ? (rawText.substring(0, 10000) + '...') : "Conteúdo não disponível.", // limita tamanho
+          data: new Date().toISOString().split('T')[0],
+          fonte: 'Upload Manual - ' + (fileName || '')
+        };
+
+        const novosSuspeitos: Suspeito[] = [
+          {
+            id: 's_' + Date.now(),
+            nome: 'Suspeito Extraído de: ' + (fileName || 'Desconhecido'),
+            alcunha: 'Extração Automática',
+            ultimaVisto: 'Desconhecido',
+            fotoUrl: extractedImages.length > 0 ? extractedImages[0] : undefined,
+            caracteristicas: [
+              { tipo: 'outros', descricao: 'Suspeito indexado automaticamente a partir de arquivo upado.' }
+            ],
+            relatorios: [novoRelatorio]
           }
-        });
+        ];
 
         setExtraidos(novosSuspeitos.length);
         setFotosExtraidas(extractedImages.length);
         onIngest(novosSuspeitos);
         setStatus('completed');
-      }, 2000);
+      }, 1500);
       
     } catch (error) {
       console.error("Erro na ingestão:", error);
-      alert("Erro ao processar o PDF. Veja o console.");
-      setStatus('idle');
-    }
-  };
-
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFileName(e.target.files[0].name);
+      alert("Erro ao processar o arquivo. Veja o console.");
       setStatus('idle');
     }
   };
@@ -69,30 +81,30 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
           Ingestão de Dados
         </h2>
         <p className="text-secondary">
-          Suba arquivos de texto (.docx, .pdf) para que a IA do sistema extraia e classifique características criminais automaticamente, mapeando todos os suspeitos e vítimas mencionados.
+          Suba arquivos de texto (.docx, .pdf, .txt) para extrair o conteúdo e criar registros automaticamente.
         </p>
       </div>
 
       <div className="upload-grid">
-        <div className="drop-zone" onClick={() => setFileName("RIC_Triplo_Homicidio_Monte_Serrat.pdf")}>
+        <div className="drop-zone" onClick={() => document.getElementById('fileInput')?.click()}>
           <input 
+            id="fileInput"
             type="file" 
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
                 setFile(e.target.files[0]);
                 setFileName(e.target.files[0].name);
-              } else {
-                setFileName("RIC_Triplo_Homicidio_Monte_Serrat.pdf"); // fallback de simulação
+                setStatus('idle');
               }
             }}
             accept=".doc,.docx,.pdf,.txt"
-            style={{ zIndex: -1 }}
+            style={{ display: 'none' }}
           />
           <div className="icon-circle">
             <FileText size={32} />
           </div>
           <p style={{ fontWeight: 'bold', fontSize: '1.25rem', marginBottom: '0.5rem', color: fileName ? 'var(--accent-blue)' : 'var(--text-primary)' }}>
-            {fileName ? fileName : 'Toque ou clique para selecionar (Simule upload do RIC)'}
+            {fileName ? fileName : 'Toque ou clique para selecionar seu arquivo'}
           </p>
           <p className="text-secondary text-sm">
             Formatos aceitos: DOCX, PDF, TXT
@@ -108,7 +120,7 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
             
             <div className="status-box">
               {status === 'idle' && (
-                <p className="text-sm text-secondary">Nenhum documento na fila. Aguardando envio para análise semântica estrutural.</p>
+                <p className="text-sm text-secondary">Aguardando envio do arquivo para leitura de texto estrutural.</p>
               )}
 
               {status === 'processing' && (
@@ -122,7 +134,7 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
                     <div className="progress-bar-fill" style={{ width: '80%', transition: 'width 3s' }} />
                   </div>
                   <p className="text-xs text-secondary" style={{ marginTop: '0.5rem' }}>
-                    Analisando texto, identificando indivíduos, qualificações e vinculando ao IP...
+                    Extraindo texto real do arquivo e estruturando informações...
                   </p>
                 </div>
               )}
@@ -136,17 +148,16 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
                   <ul className="text-sm" style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <Users size={16} style={{ color: '#22c55e' }} />
-                      <span><strong>{extraidos}</strong> indivíduos extraídos (vítimas/suspeitos)</span>
+                      <span><strong>{extraidos}</strong> indivíduo cadastrado a partir do arquivo</span>
                     </li>
                     <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <FileText size={16} style={{ color: '#22c55e' }} />
-                      <span><strong>{fotosExtraidas}</strong> fotos extraídas do documento e vinculadas</span>
+                      <span><strong>{fotosExtraidas}</strong> fotos extraídas do documento</span>
                     </li>
                     <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <FileText size={16} style={{ color: '#22c55e' }} />
-                      <span>Relatório cadastrado em todas as fichas</span>
+                      <span>Texto inserido no Relatório e associado com sucesso!</span>
                     </li>
-                    <li><span style={{ color: '#22c55e' }}>•</span> As fichas já estão disponíveis na aba de busca global.</li>
                   </ul>
                 </div>
               )}
@@ -159,7 +170,7 @@ export const DocumentIngestion: React.FC<DocumentIngestionProps> = ({ onIngest }
             className={`btn ${(!fileName || status === 'processing' || status === 'completed') ? 'btn-ghost' : 'btn-primary'}`}
             style={{ width: '100%', padding: '1rem', marginTop: '2rem', opacity: (!fileName || status === 'processing' || status === 'completed') ? 0.5 : 1 }}
           >
-            {status === 'processing' ? 'EXTRAINDO...' : status === 'completed' ? 'SUCESSO' : 'INICIAR EXTRAÇÃO'}
+            {status === 'processing' ? 'EXTRAINDO TEXTO...' : status === 'completed' ? 'SUCESSO' : 'INICIAR EXTRAÇÃO'}
           </button>
         </div>
       </div>

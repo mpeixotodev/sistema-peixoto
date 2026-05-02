@@ -62,7 +62,27 @@ export async function extractImagesFromPDF(file: File): Promise<string[]> {
     
     return base64Images;
   } catch (error) {
-    console.error("Erro geral na extração do PDF:", error);
+    console.error("Erro geral na extração de imagens do PDF:", error);
     throw error;
+  }
+}
+
+export async function extractTextFromPDF(file: File): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(' ');
+      fullText += pageText + "\n";
+    }
+
+    return fullText;
+  } catch (error) {
+    console.error("Erro na extração de texto do PDF:", error);
+    return "Falha ao extrair texto do documento.";
   }
 }

@@ -1,25 +1,38 @@
 import { useState, useEffect } from 'react';
 import { SearchEngine } from './components/SearchEngine';
 import { DocumentIngestion } from './components/DocumentIngestion';
-import { Shield, Search, FileUp, Activity, Database } from 'lucide-react';
+import { Auth } from './components/Auth';
+import { Shield, Search, FileUp, Activity, Database, LogOut } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import type { Suspeito } from './types';
+import type { Session } from '@supabase/supabase-js';
 import './App.css';
 
 function App() {
+  const [session, setSession] = useState<Session | null>(null);
   const [activeTab, setActiveTab] = useState<'search' | 'ingestion'>('search');
   const [suspeitosGlobais, setSuspeitosGlobais] = useState<Suspeito[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Busca os dados reais do Supabase ao iniciar
   useEffect(() => {
-    fetchSuspeitos();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) fetchSuspeitos();
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) fetchSuspeitos();
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const fetchSuspeitos = async () => {
     setIsLoading(true);
     try {
-      // Busca suspeitos
       const { data: suspeitosData, error: suspeitosError } = await supabase
         .from('suspeitos')
         .select('*')
@@ -27,14 +40,12 @@ function App() {
         
       if (suspeitosError) throw suspeitosError;
 
-      // Busca características
       const { data: caracData, error: caracError } = await supabase
         .from('caracteristicas')
         .select('*');
         
       if (caracError) throw caracError;
 
-      // Monta os objetos complexos na memória
       const suspeitosCompletos: Suspeito[] = (suspeitosData || []).map(s => {
         const caracs = (caracData || []).filter(c => c.suspeito_id === s.id);
         return {
@@ -44,7 +55,7 @@ function App() {
           fotoUrl: s.foto_url || undefined,
           ultimaVisto: s.ultima_visto || undefined,
           caracteristicas: caracs.map(c => ({ tipo: c.tipo as any, descricao: c.descricao })),
-          relatorios: [] // Simplificando por enquanto
+          relatorios: []
         };
       });
 
@@ -60,7 +71,6 @@ function App() {
     setIsLoading(true);
     try {
       for (const suspeito of novosSuspeitos) {
-        // 1. Inserir Relatório
         let relatorio_id = null;
         if (suspeito.relatorios && suspeito.relatorios.length > 0) {
           const relatorio = suspeito.relatorios[0];
@@ -87,7 +97,6 @@ function App() {
           }
         }
 
-        // 2. Inserir Suspeito
         const { data: newSuspeito } = await supabase
           .from('suspeitos')
           .insert({
@@ -100,7 +109,6 @@ function App() {
           .single();
 
         if (newSuspeito) {
-          // 3. Inserir Características
           if (suspeito.caracteristicas && suspeito.caracteristicas.length > 0) {
             const caracsToInsert = suspeito.caracteristicas.map(c => ({
               suspeito_id: newSuspeito.id,
@@ -110,7 +118,6 @@ function App() {
             await supabase.from('caracteristicas').insert(caracsToInsert);
           }
 
-          // 4. Inserir Relação
           if (relatorio_id) {
             await supabase.from('suspeito_relatorio').insert({
               suspeito_id: newSuspeito.id,
@@ -123,10 +130,16 @@ function App() {
       console.error('Erro ao inserir no Supabase:', error);
     }
 
-    // Quando a ingestão terminar e inserir no banco, recarregamos a lista
     await fetchSuspeitos();
     setActiveTab('search');
   };
+
+  if (!session) {
+    return <Auth />;
+  }
+
+  const userEmail = session.user.email || '';
+  const username = userEmail.split('@')[0];
 
   return (
     <div className="app-container">
@@ -161,14 +174,21 @@ function App() {
 
         <div className="nav-user">
           <div style={{ textAlign: 'right' }}>
-            <p className="text-sm font-bold">Investigador #9822</p>
+            <p className="text-sm font-bold">{username}</p>
             <div className="flex items-center gap-2" style={{ justifyContent: 'flex-end' }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#22c55e' }} />
               <p className="text-xs text-secondary font-bold uppercase">Online</p>
             </div>
           </div>
-          <div className="surface flex items-center" style={{ padding: '0.5rem', borderRadius: '50%' }}>
+          <div className="surface flex items-center" style={{ padding: '0.5rem', borderRadius: '50%', gap: '0.5rem' }}>
             <Activity size={20} style={{ color: 'var(--accent-blue)' }} />
+            <button 
+              onClick={() => supabase.auth.signOut()} 
+              style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex' }}
+              title="Sair"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
       </nav>
